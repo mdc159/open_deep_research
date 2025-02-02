@@ -5,31 +5,134 @@ import { ChatAnthropic } from "@langchain/anthropic"
 import { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { getConfig } from "@/lib/config"
 import { ReportState, Section } from "@/lib/report-state"
+import { StateGraph, Annotation } from "@langchain/langgraph"
+import { ToolNode } from "@langchain/langgraph/prebuilt"
+import { AIMessage, HumanMessage } from "@langchain/core/messages"
+import { tool } from "@langchain/core/tools"
+import { z } from "zod"
+import { updateReportState } from "../report/[threadId]/route"
+
+// Define the graph state annotation
+const ReportStateAnnotation = Annotation.Root({
+  messages: Annotation<AIMessage[]>({
+    reducer: (x, y) => x.concat(y),
+  }),
+  sections: Annotation<Section[]>({
+    reducer: (_, y) => y,
+  }),
+  searchResults: Annotation<any[]>({
+    reducer: (_, y) => y,
+  }),
+  status: Annotation<string>({
+    reducer: (_, y) => y,
+  })
+})
+
+// Type guard for models with bindTools
+interface ModelWithTools extends BaseChatModel {
+  bindTools: (tools: any[]) => BaseChatModel;
+}
+
+function isModelWithTools(model: any): model is ModelWithTools {
+  return model && typeof model.bindTools === 'function';
+}
+
+// Zod schemas for validation
+const TavilyConfigSchema = z.object({
+  max_results: z.number().min(1).max(10).default(5),
+  search_depth: z.enum(["basic", "deep"]).default("deep"),
+  include_raw_content: z.boolean().default(false),
+  include_answer: z.boolean().default(true),
+  include_domains: z.array(z.string()).optional(),
+  exclude_domains: z.array(z.string()).optional()
+})
+
+const TavilyQuerySchema = z.object({
+  query: z.string().min(1).max(300).transform(q => 
+    q.replace(/['"]/g, '') // Remove quotes
+     .replace(/\s+/g, ' ') // Normalize whitespace
+     .trim()
+  )
+})
+
+// Improved Tavily tool initialization
+async function createTavilySearchTool(config: any) {
+  const apiKey = process.env.TAVILY_API_KEY
+  if (!apiKey?.startsWith('tvly-')) {
+    throw new Error('Invalid Tavily API key format. Key must start with "tvly-"')
+  }
+
+  console.log("🌐 Initializing Tavily search tool with config:", {
+    apiKey: "present",
+    max_results: 5,
+    search_depth: "deep",
+    include_answer: true
+  })
+
+  return new TavilySearchResults({
+    apiKey,
+    maxResults: 5, // Match Python implementation
+    searchDepth: "deep",
+    includeAnswer: true,
+    includeRawContent: false // Avoid large responses
+  })
+}
+
+// Simplified search execution
+async function executeTavilySearch(searchTool: any, query: string) {
+  try {
+    // Clean and validate query
+    const validatedQuery = TavilyQuerySchema.parse({ query }).query
+    
+    if (validatedQuery.length > 300) {
+      console.warn("⚠️ Query too long, truncating:", validatedQuery)
+      return []
+    }
+
+    console.log("🔍 Executing search for query:", validatedQuery)
+    const result = await searchTool.invoke({
+      query: validatedQuery
+    })
+    
+    if (!result || !Array.isArray(result)) {
+      console.warn("⚠️ Invalid search result format:", result)
+      return []
+    }
+
+    return result
+  } catch (error: any) {
+    console.error("❌ Search execution error:", {
+      query,
+      error: error.message,
+      status: error.response?.status,
+      data: error.response?.data
+    })
+    return []
+  }
+}
 
 async function generateReportPlan(state: ReportState): Promise<Partial<ReportState>> {
   console.log("🚀 Starting report plan generation for topic:", state.topic)
   const config = getConfig()
   console.log("📝 Using configuration:", {
     plannerModel: config.plannerModel,
-    numberOfQueries: config.numberOfQueries,
-    tavilyTopic: config.tavilyTopic,
-    tavilyDays: config.tavilyDays
+    numberOfQueries: config.numberOfQueries
   })
   
-  let llm: BaseChatModel;
-  
   try {
-    // Configure planner model based on selection
-    if (config.plannerModel.startsWith("deepseek")) {
-      console.log("🤖 Initializing Deepseek model for planning")
-      llm = new ChatOpenAI({
-        modelName: config.plannerModel,
-        configuration: { baseURL: "https://api.deepseek.com/v1" },
-        apiKey: config.deepseekApiKey,
-        temperature: 0
-      })
-    } else if (config.plannerModel.startsWith("o")) {
-      console.log("🤖 Initializing OpenAI model for planning")
+    // Initialize Tavily search tool with improved configuration
+    const searchTool = await createTavilySearchTool(config)
+
+    // Create tool node
+    const tools = [searchTool]
+    console.log("🛠️ Created tool node with tools:", tools.map(t => t.constructor.name))
+    const toolNode = new ToolNode(tools)
+
+    // Configure model based on selection
+    console.log("🤖 Initializing model for planning")
+    let llm: BaseChatModel & { bindTools: Function };
+    
+    if (config.plannerModel.startsWith("o")) {
       const modelMap: Record<string, string> = {
         "o1": "o1-2024-12-17",
         "o1-mini": "o1-mini-2024-09-12",
@@ -38,80 +141,139 @@ async function generateReportPlan(state: ReportState): Promise<Partial<ReportSta
       llm = new ChatOpenAI({
         modelName: modelMap[config.plannerModel] || "o3-mini-2025-01-31",
         apiKey: process.env.OPENAI_API_KEY
-      })
+      }) as BaseChatModel & { bindTools: Function }
     } else {
-      console.log("🤖 Initializing Claude model for planning")
+      // Fallback to Claude
       llm = new ChatAnthropic({
-        modelName: config.plannerModel,
-        apiKey: config.anthropicApiKey || process.env.ANTHROPIC_API_KEY,
-        temperature: 0
-      })
+        modelName: "claude-3-sonnet-20240620",
+        apiKey: process.env.ANTHROPIC_API_KEY,
+      }) as BaseChatModel & { bindTools: Function }
     }
-    
+
+    // Bind tools to model
+    const boundModel = llm.bindTools(tools)
+
+    // Define graph nodes
+    function shouldContinue(state: typeof ReportStateAnnotation.State) {
+      const messages = state.messages
+      const lastMessage = messages[messages.length - 1] as AIMessage
+      
+      if (lastMessage.tool_calls?.length) {
+        return "tools"
+      }
+      return "__end__"
+    }
+
+    async function callModel(state: typeof ReportStateAnnotation.State) {
+      const messages = state.messages
+      const response = await boundModel.invoke(messages)
+      return { messages: [response] }
+    }
+
+    // Create and compile graph
+    const workflow = new StateGraph(ReportStateAnnotation)
+      .addNode("agent", callModel)
+      .addNode("tools", toolNode)
+      .addEdge("__start__", "agent")
+      .addConditionalEdges("agent", shouldContinue)
+      .addEdge("tools", "agent")
+
+    const app = workflow.compile()
+
     // Generate initial structure
     console.log("📋 Generating report structure...")
-    const planPrompt = `
-      ${config.reportStructure}
-      Topic: ${state.topic}
-      ${state.feedback ? `Previous feedback: ${state.feedback}` : ""}
-      Generate a detailed report structure with sections.
-    `
-    
-    const plan = await llm.invoke(planPrompt)
-    console.log("✅ Generated plan:", plan.content)
-    
-    // Generate search queries for research
-    console.log("🔍 Generating search queries...")
-    const searchPrompt = `Based on this report plan, generate ${config.numberOfQueries} search queries for research:
-      ${plan.content}`
-    
-    const queries = await llm.invoke(searchPrompt)
-    console.log("✅ Generated queries:", queries.content)
-    
-    console.log("🌐 Initializing Tavily search...")
-    const searchTool = new TavilySearchResults({
-      apiKey: process.env.TAVILY_API_KEY,
-      maxResults: 3,
-      topic: config.tavilyTopic,
-      days: config.tavilyDays
+    const planPrompt = new HumanMessage({
+      content: `
+        ${config.reportStructure}
+        Topic: ${state.topic}
+        ${state.feedback ? `Previous feedback: ${state.feedback}` : ""}
+        Generate a detailed report structure with sections.
+      `
     })
     
-    // Perform searches in parallel
+    const planState = await app.invoke({ 
+      messages: [planPrompt],
+      sections: [],
+      searchResults: [],
+      status: "planning"
+    })
+
+    const plan = planState.messages[planState.messages.length - 1]
+    console.log("✅ Generated plan:", plan.content)
+    
+    // Generate search queries
+    console.log("🔍 Generating search queries...")
+    const searchPrompt = new HumanMessage({
+      content: `Based on this report plan, generate ${config.numberOfQueries} search queries for research:
+        ${plan.content}`
+    })
+    
+    const queryState = await app.invoke({
+      messages: [searchPrompt],
+      sections: [],
+      searchResults: [],
+      status: "searching"
+    })
+
+    const queries = queryState.messages[queryState.messages.length - 1]
+    console.log("✅ Generated queries:", queries.content)
+    
+    // Process search queries with improved validation
     console.log("🔎 Executing searches...")
     const searchQueries = (queries.content as string)
       .split("\n")
       .filter((q: string) => q.trim())
-      .map((q: string) => q
-        // Remove numbering (e.g., "1.", "2.")
-        .replace(/^\d+\.\s*/, '')
-        // Remove quotes
-        .replace(/["']/g, '')
-        .trim()
+      .map((q: string) => {
+        // Extract core query
+        const query = q
+          .replace(/^\d+\.\s*/, '') // Remove numbering
+          .replace(/["']/g, '') // Remove quotes
+          .replace(/^[^:]+:\s*/, '') // Remove prefixes like "Query:"
+          .trim()
+        return query
+      })
+      .filter(q => 
+        q.length > 0 && 
+        q.length <= 300 && // Enforce length limit
+        !q.toLowerCase().includes("here are") && 
+        !q.toLowerCase().includes("based on")
       )
-    console.log("Search queries to execute:", searchQueries)
-    
-    const searchResults = await Promise.all(
-      searchQueries.map((query: string) => searchTool.invoke({ query }))
-    )
-    console.log("✅ Search results received:", searchResults.length, "results")
-    
-    // Process results into sections
-    console.log("📑 Processing sections...")
-    const sections: Section[] = (plan.content as string)
-      .split("\n")
-      .filter((line: string) => line.match(/^\d+\./))
-      .map((line: string) => ({
-        name: line.replace(/^\d+\.\s*/, "").split("(")[0].trim(),
-        description: line,
-        research: !line.includes("(no research needed)"),
-        content: ""
-      }))
-    console.log("✅ Processed sections:", sections.length, "sections")
 
-    return { 
-      sections, 
-      searchResults,
-      status: "awaiting_feedback"
+    try {
+      // Execute searches in parallel
+      console.log("🌐 Running Tavily searches...")
+      const searchResults = await Promise.all(
+        searchQueries.map(async (query, index) => {
+          console.log(`🔍 Search ${index + 1}/${searchQueries.length}:`, query)
+          return executeTavilySearch(searchTool, query)
+        })
+      )
+
+      // Filter out empty results
+      const validResults = searchResults.filter(result => result && result.length > 0)
+      console.log("✅ Search completed:", validResults.length, "valid results")
+
+      // Process results into sections
+      console.log("📑 Processing sections...")
+      const sections: Section[] = (plan.content as string)
+        .split("\n")
+        .filter((line: string) => line.match(/^[IVX]+\.|^[A-Z]\./))
+        .map((line: string) => ({
+          name: line.replace(/^[IVX]+\.\s*|^[A-Z]\.\s*/, "").split("(")[0].trim(),
+          description: line,
+          research: !line.includes("(no research needed)"),
+          content: ""
+        }))
+      console.log("✅ Processed sections:", sections.length, "sections")
+
+      return { 
+        sections,
+        searchResults: validResults,
+        status: "awaiting_feedback"
+      }
+    } catch (error) {
+      console.error("❌ Error in search execution:", error)
+      throw error
     }
   } catch (error) {
     console.error("❌ Error in generateReportPlan:", error)
@@ -211,45 +373,35 @@ export async function POST(req: Request) {
       metadata: { reportType, tone }
     }
     console.log("📝 Initial state created:", initialState)
+    updateReportState(threadId, initialState)
 
-    // Start async processing
-    console.log("🔄 Starting WebSocket connection...")
-    const ws = new WebSocket(`ws://localhost:3000/ws/${threadId}`)
-    
-    // Initial plan generation
-    console.log("🎯 Starting initial plan generation...")
-    const planUpdate = await generateReportPlan(initialState)
-    const stateAfterPlan = { ...initialState, ...planUpdate }
-    
-    ws.send(JSON.stringify(stateAfterPlan))
-    console.log("📤 Sent initial plan state over WebSocket")
-
-    // Set up WebSocket message handler for feedback
-    ws.onmessage = async (event) => {
-      console.log("📥 Received WebSocket message")
-      const feedback = JSON.parse(event.data)
+    // Start async report generation
+    generateReportPlan(initialState).then(planUpdate => {
+      const stateAfterPlan = { ...initialState, ...planUpdate }
+      updateReportState(threadId, stateAfterPlan)
       
-      if (feedback.accept_report_plan === false) {
-        console.log("🔄 Regenerating plan with feedback...")
-        const newPlanUpdate = await generateReportPlan({
-          ...stateAfterPlan,
-          feedback: feedback.feedback_on_report_plan
-        })
-        ws.send(JSON.stringify({ ...stateAfterPlan, ...newPlanUpdate }))
-      } else {
-        console.log("✍️ Starting section building...")
-        const sectionsUpdate = await buildSections(stateAfterPlan)
-        ws.send(JSON.stringify({ ...stateAfterPlan, ...sectionsUpdate }))
-        ws.close()
-        console.log("🏁 Report generation completed")
-      }
-    }
+      return buildSections(stateAfterPlan)
+    }).then(sectionsUpdate => {
+      const finalState = { ...initialState, ...sectionsUpdate, status: "completed" }
+      updateReportState(threadId, finalState)
+    }).catch(error => {
+      console.error("❌ Error in report generation:", error)
+      updateReportState(threadId, { 
+        ...initialState, 
+        status: "error",
+        error: error?.message || "Unknown error occurred"
+      })
+    })
 
+    // Return immediately with threadId for client to start polling
     return NextResponse.json({ threadId })
-  } catch (error) {
+  } catch (error: any) {
     console.error("❌ Fatal error in report generation:", error)
     return NextResponse.json(
-      { error: "Failed to start report generation" },
+      { 
+        error: "Failed to start report generation", 
+        details: error?.message || "Unknown error occurred" 
+      },
       { status: 500 }
     )
   }

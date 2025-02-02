@@ -21,6 +21,8 @@ export interface AppConfig {
   plannerModel: PlannerModel
   writerModel: WriterModel
   reasoningEffort: "low" | "medium" | "high"
+  deepseekApiKey?: string
+  anthropicApiKey?: string
 }
 
 export const DEFAULT_CONFIG: AppConfig = {

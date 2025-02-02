@@ -5,8 +5,35 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ReportGenerator } from "@/components/report-generator"
+import { useRouter } from "next/navigation"
 
 export default function Home() {
+  const router = useRouter()
+  
+  const handleGenerateReport = async (data: any) => {
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(data),
+      })
+      
+      const result = await response.json()
+      
+      if (result.error) {
+        throw new Error(result.error)
+      }
+      
+      // Navigate to the report page
+      router.push(`/report/${result.threadId}`)
+    } catch (error) {
+      console.error("Failed to generate report:", error)
+      // Handle error (show toast, etc)
+    }
+  }
+
   return (
     <div className="flex min-h-screen flex-col">
       <header className="border-b">

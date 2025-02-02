@@ -2,7 +2,7 @@
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ReportGenerator } from "@/components/report-generator"
 
@@ -23,7 +23,15 @@ export default function Home() {
               <Button>Generate New Report</Button>
             </DialogTrigger>
             <DialogContent className="sm:max-w-[600px]">
-              <ReportGenerator />
+              <DialogHeader>
+                <DialogTitle>Generate New Report</DialogTitle>
+                <DialogDescription>
+                  Configure your report settings and choose AI models for generation.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-4">
+                <ReportGenerator />
+              </div>
             </DialogContent>
           </Dialog>
         </div>

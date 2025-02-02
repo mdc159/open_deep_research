@@ -11,14 +11,50 @@ import { useToast } from "@/hooks/use-toast"
 import { useReportStatus } from "@/hooks/use-report-status"
 import { Textarea } from "@/components/ui/textarea"
 import { Section } from "@/lib/report-state"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { ModelConfig } from "@/components/model-config"
+import { DEFAULT_CONFIG, type AppConfig } from "@/lib/config"
 
 export function ReportGenerator() {
   const [topic, setTopic] = useState("")
+  const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG)
+  const [isGenerating, setIsGenerating] = useState(false)
   const [reportType, setReportType] = useState("")
   const [tone, setTone] = useState("")
   const [feedback, setFeedback] = useState("")
   const { toast } = useToast()
   const { progress, connectWebSocket } = useReportStatus()
+
+  const handleGenerate = async () => {
+    if (!topic) return
+    
+    setIsGenerating(true)
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic,
+          config,
+          reportType: "general",
+          tone: "formal"
+        }),
+      })
+      
+      if (!response.ok) {
+        throw new Error("Failed to generate report")
+      }
+      
+      // Handle successful generation
+      const data = await response.json()
+      console.log("Report generation started:", data)
+      
+    } catch (error) {
+      console.error("Error generating report:", error)
+    } finally {
+      setIsGenerating(false)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -98,112 +134,63 @@ export function ReportGenerator() {
   )
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Generate Report</CardTitle>
-        <CardDescription>
-          Configure your report generation settings
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="topic">Report Topic</Label>
-            <Input
-              id="topic"
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              placeholder="Enter your report topic"
-              disabled={progress.status !== "idle"}
-            />
-          </div>
-          
-          <div className="space-y-2">
-            <Label htmlFor="report-type">Report Type</Label>
-            <Select 
-              value={reportType} 
-              onValueChange={setReportType}
-              disabled={progress.status !== "idle"}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="financial">Financial Analysis</SelectItem>
-                <SelectItem value="market">Market Research</SelectItem>
-                <SelectItem value="performance">Performance Review</SelectItem>
-                <SelectItem value="custom">Custom Report</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+    <div className="grid gap-6">
+      <div className="grid gap-2">
+        <Label htmlFor="topic">Topic</Label>
+        <Input
+          id="topic"
+          placeholder="Enter your report topic..."
+          value={topic}
+          onChange={(e) => setTopic(e.target.value)}
+        />
+      </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="tone">Writing Tone</Label>
-            <Select 
-              value={tone} 
-              onValueChange={setTone}
-              disabled={progress.status !== "idle"}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select tone" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="formal">Formal</SelectItem>
-                <SelectItem value="professional">Professional</SelectItem>
-                <SelectItem value="casual">Casual</SelectItem>
-                <SelectItem value="technical">Technical</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {progress.status === "awaiting_feedback" && (
-            <div className="space-y-2">
-              <Label>Provide Feedback</Label>
-              <Textarea
-                value={feedback}
-                onChange={(e) => setFeedback(e.target.value)}
-                placeholder="Enter your feedback on the report structure..."
-                className="min-h-[100px]"
+      <Tabs defaultValue="models" className="w-full">
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="models">Models</TabsTrigger>
+          <TabsTrigger value="advanced">Advanced</TabsTrigger>
+        </TabsList>
+        <TabsContent value="models">
+          <ModelConfig
+            plannerModel={config.plannerModel}
+            writerModel={config.writerModel}
+            onPlannerModelChange={(model) => setConfig({ ...config, plannerModel: model })}
+            onWriterModelChange={(model) => setConfig({ ...config, writerModel: model })}
+          />
+        </TabsContent>
+        <TabsContent value="advanced">
+          <div className="grid gap-4">
+            <div className="grid gap-2">
+              <Label htmlFor="queries">Number of Search Queries</Label>
+              <Input
+                id="queries"
+                type="number"
+                min={1}
+                max={5}
+                value={config.numberOfQueries}
+                onChange={(e) => setConfig({ ...config, numberOfQueries: parseInt(e.target.value) })}
               />
-              <Button 
-                type="button" 
-                onClick={submitFeedback}
-                disabled={!feedback}
-              >
-                Submit Feedback
-              </Button>
             </div>
-          )}
-
-          {progress.status !== "idle" && (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Generation Progress</Label>
-                <Progress 
-                  value={
-                    progress.status === "completed" 
-                      ? 100 
-                      : ((progress.completedSections.length / (progress.sections.length || 1)) * 100)
-                  } 
-                  className="w-full" 
-                />
-              </div>
-
-              <div className="space-y-4">
-                {progress.sections.map(renderSection)}
-              </div>
+            <div className="grid gap-2">
+              <Label>Search Topic</Label>
+              <Tabs defaultValue={config.tavilyTopic} onValueChange={(v: "general" | "news") => setConfig({ ...config, tavilyTopic: v })}>
+                <TabsList>
+                  <TabsTrigger value="general">General</TabsTrigger>
+                  <TabsTrigger value="news">News</TabsTrigger>
+                </TabsList>
+              </Tabs>
             </div>
-          )}
+          </div>
+        </TabsContent>
+      </Tabs>
 
-          <Button 
-            type="submit" 
-            className="w-full" 
-            disabled={progress.status !== "idle" || !topic || !reportType || !tone}
-          >
-            {progress.status === "idle" ? "Generate Report" : "Generation in Progress..."}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+      <Button 
+        onClick={handleGenerate} 
+        disabled={!topic || isGenerating}
+        className="w-full"
+      >
+        {isGenerating ? "Generating..." : "Generate Report"}
+      </Button>
+    </div>
   )
 } 

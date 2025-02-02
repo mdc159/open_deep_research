@@ -1,12 +1,25 @@
+export type PlannerModel = 
+  | "o1"      // OpenAI O1
+  | "o1-mini" // OpenAI O1 Mini
+  | "o3-mini" // OpenAI O3 Mini
+  | "deepseek-reasoner"
+
+export type WriterModel = 
+  | "o1" 
+  | "o1-mini" 
+  | "o3-mini"
+  | "deepseek-chat" 
+  | "claude-3-sonnet-20240620"
+  | "claude-3-opus-20240229"
+  | "claude-3-haiku-20240307"
+
 export interface AppConfig {
   reportStructure: string
   numberOfQueries: number
   tavilyTopic: "general" | "news"
   tavilyDays?: number
-  plannerModel: "deepseek-reasoner" | "o3-mini" | "claude-3-sonnet-20240620"
-  writerModel: "claude-3-sonnet-20240620" | "o3-mini"
-  deepseekApiKey?: string
-  anthropicApiKey?: string
+  plannerModel: PlannerModel
+  writerModel: WriterModel
   reasoningEffort: "low" | "medium" | "high"
 }
 
@@ -17,7 +30,7 @@ export const DEFAULT_CONFIG: AppConfig = {
 3. Conclusion with structural element`,
   numberOfQueries: 2,
   tavilyTopic: "general",
-  plannerModel: "deepseek-reasoner",
+  plannerModel: "o3-mini",
   writerModel: "claude-3-sonnet-20240620",
   reasoningEffort: "medium"
 }

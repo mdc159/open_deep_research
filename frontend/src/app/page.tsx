@@ -6,8 +6,11 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ReportGenerator } from "@/components/report-generator"
 import { useRouter } from "next/navigation"
+import { TracingBeam } from "@/components/ui/tracing-beam"
+import { ArrowRight, Brain, Cog, FileText, Workflow } from "lucide-react"
+import Link from "next/link"
 
-export default function Home() {
+export default function HomePage() {
   const router = useRouter()
   
   const handleGenerateReport = async (data: any) => {
@@ -34,87 +37,104 @@ export default function Home() {
     }
   }
 
+  const features = [
+    {
+      title: "LangGraph Powered",
+      description: "Advanced report generation using LangGraph for structured, multi-step processing with feedback loops and error handling.",
+      icon: Workflow,
+    },
+    {
+      title: "AI Research",
+      description: "Intelligent web research using Tavily API for accurate and relevant information gathering.",
+      icon: Brain,
+    },
+    {
+      title: "Customizable",
+      description: "Fine-tune report generation with configurable parameters for tone, style, and depth of research.",
+      icon: Cog,
+    },
+    {
+      title: "Rich Reports",
+      description: "Generate comprehensive reports with citations, summaries, and structured sections.",
+      icon: FileText,
+    },
+  ]
+
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="border-b">
-        <div className="container flex h-16 items-center px-4">
-          <h1 className="text-2xl font-bold">Report mAIstro</h1>
-        </div>
-      </header>
-      
-      <main className="flex-1 space-y-4 p-8 pt-6">
-        <div className="flex items-center justify-between space-y-2">
-          <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button>Generate New Report</Button>
-            </DialogTrigger>
-            <DialogContent className="sm:max-w-[600px]">
-              <DialogHeader>
-                <DialogTitle>Generate New Report</DialogTitle>
-                <DialogDescription>
-                  Configure your report settings and choose AI models for generation.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="py-4">
-                <ReportGenerator />
-              </div>
-            </DialogContent>
-          </Dialog>
+    <TracingBeam className="px-6">
+      <div className="space-y-8">
+        <div className="space-y-4">
+          <h1 className="text-4xl font-bold tracking-tight">Welcome to Report mAIstro</h1>
+          <p className="text-lg text-muted-foreground">
+            Generate comprehensive, research-backed reports powered by AI and LangGraph
+          </p>
         </div>
 
-        <Tabs defaultValue="overview" className="space-y-4">
-          <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="reports">Reports</TabsTrigger>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
-          </TabsList>
-          
-          <TabsContent value="overview" className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Recent Reports</CardTitle>
-                  <CardDescription>You have generated 12 reports this month</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {/* Add recent reports list here */}
-                </CardContent>
-              </Card>
+        <div className="grid gap-6 md:grid-cols-2">
+          {features.map((feature) => (
+            <Card key={feature.title}>
+              <CardHeader>
+                <div className="flex items-center gap-4">
+                  <div className="rounded-lg bg-primary/10 p-2">
+                    <feature.icon className="h-6 w-6 text-primary" />
+                  </div>
+                  <CardTitle className="text-xl">{feature.title}</CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-muted-foreground">{feature.description}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>AI Credits</CardTitle>
-                  <CardDescription>Your current usage and limits</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {/* Add credits info here */}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Quick Actions</CardTitle>
-                  <CardDescription>Common report generation tasks</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  <Button className="w-full" variant="outline">Upload Data</Button>
-                  <Button className="w-full" variant="outline">Schedule Report</Button>
-                  <Button className="w-full" variant="outline">View Templates</Button>
-                </CardContent>
-              </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>How It Works</CardTitle>
+            <CardDescription>
+              Understanding the report generation process
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="space-y-4">
+              <h3 className="font-semibold">1. LangGraph Pipeline</h3>
+              <p className="text-sm text-muted-foreground">
+                Reports are generated using a sophisticated LangGraph pipeline that breaks down the process into manageable steps:
+              </p>
+              <ul className="list-disc pl-6 text-sm text-muted-foreground space-y-2">
+                <li>Topic Analysis and Planning</li>
+                <li>Research Phase with Tavily API</li>
+                <li>Content Generation and Structuring</li>
+                <li>Review and Refinement</li>
+                <li>Final Formatting and Citations</li>
+              </ul>
             </div>
-          </TabsContent>
 
-          <TabsContent value="reports" className="space-y-4">
-            {/* Reports list will go here */}
-          </TabsContent>
+            <div className="space-y-4">
+              <h3 className="font-semibold">2. Configuration Options</h3>
+              <p className="text-sm text-muted-foreground">
+                Customize your report generation with various parameters:
+              </p>
+              <ul className="list-disc pl-6 text-sm text-muted-foreground space-y-2">
+                <li>Report Type (General, Technical, Academic)</li>
+                <li>Writing Style and Tone</li>
+                <li>Research Depth and Sources</li>
+                <li>Section Organization</li>
+                <li>Citation Style</li>
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
 
-          <TabsContent value="settings" className="space-y-4">
-            {/* Settings form will go here */}
-          </TabsContent>
-        </Tabs>
-      </main>
-    </div>
+        <div className="flex justify-center">
+          <Link href="/reports/new">
+            <Button size="lg" className="gap-2">
+              Generate Your First Report
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </Link>
+        </div>
+      </div>
+    </TracingBeam>
   )
 }

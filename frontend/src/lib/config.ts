@@ -41,6 +41,9 @@ export function getConfig(overrides: Partial<AppConfig> = {}): AppConfig {
   return {
     ...DEFAULT_CONFIG,
     ...overrides,
-    tavilyDays: overrides.tavilyTopic === "news" ? 7 : undefined
+    tavilyDays: overrides.tavilyTopic === "news" ? 7 : undefined,
+    // Load API keys from environment if not provided in overrides
+    anthropicApiKey: overrides.anthropicApiKey || process.env.ANTHROPIC_API_KEY,
+    deepseekApiKey: overrides.deepseekApiKey || process.env.DEEPSEEK_API_KEY
   }
 } 

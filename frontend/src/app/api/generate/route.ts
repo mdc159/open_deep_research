@@ -5,7 +5,7 @@ import { ChatAnthropic } from "@langchain/anthropic"
 import { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { getConfig } from "@/lib/config"
 import { ReportState, Section } from "@/lib/report-state"
-import { StateGraph, Annotation } from "@langchain/langgraph"
+import { StateGraph, Annotation, END } from "@langchain/langgraph"
 import { ToolNode } from "@langchain/langgraph/prebuilt"
 import { AIMessage, HumanMessage } from "@langchain/core/messages"
 import { tool } from "@langchain/core/tools"
@@ -39,18 +39,18 @@ function isModelWithTools(model: any): model is ModelWithTools {
 
 // Zod schemas for validation
 const TavilyConfigSchema = z.object({
-  max_results: z.number().min(1).max(10).default(5),
-  search_depth: z.enum(["basic", "deep"]).default("deep"),
-  include_raw_content: z.boolean().default(false),
-  include_answer: z.boolean().default(true),
-  include_domains: z.array(z.string()).optional(),
-  exclude_domains: z.array(z.string()).optional()
+  maxResults: z.number().min(1).max(10).default(5),
+  searchDepth: z.enum(["basic", "deep", "advanced"]).default("deep"),
+  includeRawContent: z.boolean().default(false),
+  includeAnswer: z.boolean().default(true),
+  includeDomains: z.array(z.string()).optional(),
+  excludeDomains: z.array(z.string()).optional()
 })
 
 const TavilyQuerySchema = z.object({
   query: z.string().min(1).max(300).transform(q => 
-    q.replace(/['"]/g, '') // Remove quotes
-     .replace(/\s+/g, ' ') // Normalize whitespace
+    q.replace(/['"]/g, '')
+     .replace(/\s+/g, ' ')
      .trim()
   )
 })
@@ -64,48 +64,131 @@ async function createTavilySearchTool(config: any) {
 
   console.log("🌐 Initializing Tavily search tool with config:", {
     apiKey: "present",
-    max_results: 5,
-    search_depth: "deep",
-    include_answer: true
+    maxResults: config.maxResults || 5,
+    searchDepth: "deep",
+    includeAnswer: true,
+    includeRawContent: true,
+    topic: config.tavilyTopic || "general"
   })
 
   return new TavilySearchResults({
     apiKey,
-    maxResults: 5, // Match Python implementation
+    maxResults: config.maxResults || 5,
     searchDepth: "deep",
     includeAnswer: true,
-    includeRawContent: false // Avoid large responses
+    includeRawContent: true,
+    includeImages: false,
+    topic: config.tavilyTopic || "general",
+    ...(config.tavilyTopic === "news" && { days: config.tavilyDays || 7 }),
+    includeDomains: config.includeDomains || ["*.gov", "*.edu"],
+    excludeDomains: config.excludeDomains || ["*.blogspot.com"]
   })
 }
 
-// Simplified search execution
+// Simplified search execution with proper parameter naming
 async function executeTavilySearch(searchTool: any, query: string) {
+  let validatedQuery: string = query;  // Initialize with original query
   try {
     // Clean and validate query
-    const validatedQuery = TavilyQuerySchema.parse({ query }).query
+    validatedQuery = TavilyQuerySchema.parse({ query }).query
     
     if (validatedQuery.length > 300) {
       console.warn("⚠️ Query too long, truncating:", validatedQuery)
       return []
     }
 
-    console.log("🔍 Executing search for query:", validatedQuery)
-    const result = await searchTool.invoke({
-      query: validatedQuery
-    })
-    
-    if (!result || !Array.isArray(result)) {
-      console.warn("⚠️ Invalid search result format:", result)
-      return []
+    // Log the full request configuration
+    const requestConfig = {
+      query: validatedQuery,
+      includeAnswer: true,
+      includeRawContent: true,
+      searchDepth: "deep"
     }
+    console.log("🔍 Tavily Search Request:", {
+      endpoint: "https://api.tavily.com/search",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: requestConfig
+    })
 
-    return result
+    // Execute the search
+    console.log("🔍 Executing search for query:", validatedQuery)
+    try {
+      const rawResponse = await fetch("https://api.tavily.com/search", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "Authorization": `Bearer ${process.env.TAVILY_API_KEY}`
+        },
+        body: JSON.stringify(requestConfig)
+      });
+
+      // Log the raw response before parsing
+      console.log("🔍 Tavily Raw Response:", {
+        status: rawResponse.status,
+        statusText: rawResponse.statusText,
+        headers: Object.fromEntries(rawResponse.headers.entries())
+      });
+
+      const responseText = await rawResponse.text();
+      console.log("🔍 Tavily Response Body:", responseText);
+
+      let result;
+      try {
+        result = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error("❌ Failed to parse Tavily response:", parseError);
+        throw new Error(`Invalid JSON response: ${responseText}`);
+      }
+
+      if (!rawResponse.ok) {
+        throw new Error(`Tavily API Error (${rawResponse.status}): ${JSON.stringify(result)}`);
+      }
+    
+      if (!result || !Array.isArray(result?.results)) {
+        console.warn("⚠️ Invalid search result format:", result)
+        return []
+      }
+
+      // Deduplicate and format results
+      const uniqueResults = result.results.reduce((acc: any[], curr: any) => {
+        if (!acc.some(item => item.url === curr.url)) {
+          acc.push({
+            ...curr,
+            content: curr.content?.slice(0, 5000)
+          })
+        }
+        return acc
+      }, [])
+
+      return uniqueResults
+    } catch (fetchError: unknown) {
+      console.error("❌ Tavily API Error:", {
+        error: fetchError instanceof Error ? {
+          message: fetchError.message,
+          cause: fetchError.cause,
+          stack: fetchError.stack
+        } : String(fetchError)
+      });
+      throw fetchError;
+    }
   } catch (error: any) {
     console.error("❌ Search execution error:", {
       query,
-      error: error.message,
-      status: error.response?.status,
-      data: error.response?.data
+      error: {
+        message: error.message,
+        name: error.name,
+        stack: error.stack,
+        cause: error.cause
+      },
+      requestDetails: {
+        query: validatedQuery,
+        endpoint: "https://api.tavily.com/search"
+      }
     })
     return []
   }
@@ -146,7 +229,7 @@ async function generateReportPlan(state: ReportState): Promise<Partial<ReportSta
       // Fallback to Claude
       llm = new ChatAnthropic({
         modelName: "claude-3-sonnet-20240620",
-        apiKey: process.env.ANTHROPIC_API_KEY,
+        apiKey: config.anthropicApiKey || process.env.ANTHROPIC_API_KEY,
       }) as BaseChatModel & { bindTools: Function }
     }
 
@@ -175,7 +258,10 @@ async function generateReportPlan(state: ReportState): Promise<Partial<ReportSta
       .addNode("agent", callModel)
       .addNode("tools", toolNode)
       .addEdge("__start__", "agent")
-      .addConditionalEdges("agent", shouldContinue)
+      .addConditionalEdges("agent", shouldContinue, {
+        tools: "tools",
+        __end__: END
+      })
       .addEdge("tools", "agent")
 
     const app = workflow.compile()
@@ -310,13 +396,18 @@ async function buildSections(state: ReportState): Promise<Partial<ReportState>> 
         apiKey: process.env.OPENAI_API_KEY,
         temperature: 0
       })
-    } else {
+    } else if (config.writerModel.startsWith("claude")) {
       console.log("🤖 Initializing Claude model for writing")
+      if (!config.anthropicApiKey) {
+        throw new Error('Anthropic API key is required');
+      }
       writer = new ChatAnthropic({
         modelName: config.writerModel,
-        apiKey: config.anthropicApiKey || process.env.ANTHROPIC_API_KEY,
+        apiKey: config.anthropicApiKey,
         temperature: 0
-      })
+      });
+    } else {
+      throw new Error('Unsupported writer model');
     }
     
     console.log("📝 Starting section generation...")

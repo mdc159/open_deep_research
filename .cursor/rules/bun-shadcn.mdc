@@ -1,0 +1,11 @@
+---
+description: 
+globs: 
+---
+
+# Bun and shadcn
+
+always use this command for using bun and shadcn, in the frontend directory
+
+- [components.json](mdc:frontend/components.json)
+

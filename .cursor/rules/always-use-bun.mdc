@@ -1,0 +1,9 @@
+---
+description: when add packages use bun package manager to install
+globs: 
+---
+
+# Your rule content
+always use bun
+- You can @ files here
+- You can use markdown but dont have to

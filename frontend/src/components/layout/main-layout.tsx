@@ -1,14 +1,16 @@
 "use client"
 
 import { useState } from "react"
-import { Sidebar } from "./sidebar"
+import { Sidebar } from "@/components/layout/sidebar"
 import { SparklesCore } from "@/components/ui/sparkles"
+import { cn } from "@/lib/utils"
 
-interface MainLayoutProps {
+interface MainLayoutProps extends React.HTMLAttributes<HTMLDivElement> {
   children: React.ReactNode
 }
 
-export function MainLayout({ children }: MainLayoutProps) {
+export function MainLayout({ children, className }: MainLayoutProps) {
+  // Initialize collapsed state to false to start expanded
   const [isCollapsed, setIsCollapsed] = useState(false)
 
   return (
@@ -33,7 +35,7 @@ export function MainLayout({ children }: MainLayoutProps) {
         </div>
 
         {/* Main content */}
-        <main className="flex-1 overflow-y-auto bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <main className={cn("flex-1 overflow-y-auto", className)}>
           <div className="container mx-auto p-8">
             {children}
           </div>

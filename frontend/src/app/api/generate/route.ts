@@ -40,7 +40,7 @@ function isModelWithTools(model: any): model is ModelWithTools {
 // Zod schemas for validation
 const TavilyConfigSchema = z.object({
   maxResults: z.number().min(1).max(10).default(5),
-  searchDepth: z.enum(["basic", "deep", "advanced"]).default("deep"),
+  searchDepth: z.enum(["basic", "advanced"]).default("advanced"),
   includeRawContent: z.boolean().default(false),
   includeAnswer: z.boolean().default(true),
   includeDomains: z.array(z.string()).optional(),
@@ -55,6 +55,21 @@ const TavilyQuerySchema = z.object({
   )
 })
 
+interface TavilyResponse {
+  query: string;
+  follow_up_questions: string[] | null;
+  answer: string | null;
+  images: any[];
+  results: Array<{
+    title: string;
+    url: string;
+    content: string;
+    score: number;
+    raw_content: string | null;
+  }>;
+  response_time: number;
+}
+
 // Improved Tavily tool initialization
 async function createTavilySearchTool(config: any) {
   const apiKey = process.env.TAVILY_API_KEY
@@ -65,7 +80,7 @@ async function createTavilySearchTool(config: any) {
   console.log("🌐 Initializing Tavily search tool with config:", {
     apiKey: "present",
     maxResults: config.maxResults || 5,
-    searchDepth: "deep",
+    searchDepth: "basic",
     includeAnswer: true,
     includeRawContent: true,
     topic: config.tavilyTopic || "general"
@@ -74,22 +89,18 @@ async function createTavilySearchTool(config: any) {
   return new TavilySearchResults({
     apiKey,
     maxResults: config.maxResults || 5,
-    searchDepth: "deep",
+    searchDepth: "basic",
     includeAnswer: true,
     includeRawContent: true,
     includeImages: false,
     topic: config.tavilyTopic || "general",
-    ...(config.tavilyTopic === "news" && { days: config.tavilyDays || 7 }),
-    includeDomains: config.includeDomains || ["*.gov", "*.edu"],
-    excludeDomains: config.excludeDomains || ["*.blogspot.com"]
+    ...(config.tavilyTopic === "news" && { days: config.tavilyDays || 7 })
   })
 }
 
-// Simplified search execution with proper parameter naming
 async function executeTavilySearch(searchTool: any, query: string) {
-  let validatedQuery: string = query;  // Initialize with original query
+  let validatedQuery: string = query;
   try {
-    // Clean and validate query
     validatedQuery = TavilyQuerySchema.parse({ query }).query
     
     if (validatedQuery.length > 300) {
@@ -97,25 +108,25 @@ async function executeTavilySearch(searchTool: any, query: string) {
       return []
     }
 
-    // Log the full request configuration
     const requestConfig = {
       query: validatedQuery,
-      includeAnswer: true,
-      includeRawContent: true,
-      searchDepth: "deep"
+      include_answer: true,
+      include_raw_content: true,
+      search_depth: "basic",
+      max_results: 5
     }
+
     console.log("🔍 Tavily Search Request:", {
       endpoint: "https://api.tavily.com/search",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "Authorization": `Bearer ${process.env.TAVILY_API_KEY}`
       },
       body: requestConfig
     })
 
-    // Execute the search
-    console.log("🔍 Executing search for query:", validatedQuery)
     try {
       const rawResponse = await fetch("https://api.tavily.com/search", {
         method: "POST",
@@ -127,7 +138,6 @@ async function executeTavilySearch(searchTool: any, query: string) {
         body: JSON.stringify(requestConfig)
       });
 
-      // Log the raw response before parsing
       console.log("🔍 Tavily Raw Response:", {
         status: rawResponse.status,
         statusText: rawResponse.statusText,
@@ -137,7 +147,7 @@ async function executeTavilySearch(searchTool: any, query: string) {
       const responseText = await rawResponse.text();
       console.log("🔍 Tavily Response Body:", responseText);
 
-      let result;
+      let result: TavilyResponse;
       try {
         result = JSON.parse(responseText);
       } catch (parseError) {
@@ -149,7 +159,7 @@ async function executeTavilySearch(searchTool: any, query: string) {
         throw new Error(`Tavily API Error (${rawResponse.status}): ${JSON.stringify(result)}`);
       }
     
-      if (!result || !Array.isArray(result?.results)) {
+      if (!result?.results || !Array.isArray(result.results)) {
         console.warn("⚠️ Invalid search result format:", result)
         return []
       }
